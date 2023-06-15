@@ -1,43 +1,41 @@
 use std::path::Path;
 
-use tch::{Tensor, nn, Device, no_grad};
-use tch::nn::VarStore;
+use rust_bert::bert::{BertConfig, BertEmbeddings, BertModel};
 use rust_bert::Config;
-use rust_bert::bert::{BertModel, BertEmbeddings, BertConfig};
+use rust_tokenizers::tokenizer::{BertTokenizer, MultiThreadedTokenizer, Tokenizer};
+use tch::nn::VarStore;
+use tch::{nn, no_grad, Device, Tensor};
 
-use rust_tokenizers::{BertTokenizer, BertVocab};
-use rust_tokenizers::preprocessing::tokenizer::base_tokenizer::{Tokenizer, MultiThreadedTokenizer};
-use tch::index::IndexOp;
-
-
-#[derive(Debug)]
-#[derive(Default)]
-pub struct Features  {
+#[derive(Debug, Default)]
+pub struct Features {
     pub input_ids: Option<Tensor>,
     pub token_type_ids: Option<Tensor>,
     pub token_embeddings: Option<Tensor>,
     pub cls_token_embeddings: Option<Tensor>,
     pub input_mask: Option<Tensor>,
     pub sentence_embedding: Option<Tensor>,
-    pub token_weights_sum: Option<Tensor>
+    pub token_weights_sum: Option<Tensor>,
 }
 
 impl Features {
-    pub fn new(input_ids: Tensor,
-               token_type_ids: Tensor,
-               token_embeddings: Tensor,
-               cls_token_embeddings: Tensor,
-               input_mask: Tensor,
-               sentence_embedding: Tensor,
-               token_weights_sum: Tensor) -> Features {
+    pub fn new(
+        input_ids: Tensor,
+        token_type_ids: Tensor,
+        token_embeddings: Tensor,
+        cls_token_embeddings: Tensor,
+        input_mask: Tensor,
+        sentence_embedding: Tensor,
+        token_weights_sum: Tensor,
+    ) -> Features {
         Features {
             input_ids: Some(input_ids),
             token_type_ids: Some(token_type_ids),
             token_embeddings: Some(token_embeddings),
-            cls_token_embeddings:Some(cls_token_embeddings),
+            cls_token_embeddings: Some(cls_token_embeddings),
             input_mask: Some(input_mask),
             sentence_embedding: Some(sentence_embedding),
-            token_weights_sum: Some(token_weights_sum) }
+            token_weights_sum: Some(token_weights_sum),
+        }
     }
 
     pub fn default() -> Features {
@@ -48,7 +46,8 @@ impl Features {
             cls_token_embeddings: None,
             input_mask: None,
             sentence_embedding: None,
-            token_weights_sum: None }
+            token_weights_sum: None,
+        }
     }
 }
 
@@ -58,16 +57,26 @@ pub struct Bert {
     max_seq_length: i64,
     cls_token_id: i64,
     sep_token_id: i64,
-    pub vs: VarStore
+    pub vs: VarStore,
 }
 
 impl Bert {
-    pub fn new(model_path: &Path,
-               max_seq_length: Option<i64>,
-               do_lower_case: Option<bool>,
-               device: Device) -> Bert {
-        let max_seq_length = if let Some(value) = max_seq_length {value} else { 128 };
-        let do_lower_case = if let Some(value) = do_lower_case {value} else { true };
+    pub fn new(
+        model_path: &Path,
+        max_seq_length: Option<i64>,
+        do_lower_case: Option<bool>,
+        device: Device,
+    ) -> Bert {
+        let max_seq_length = if let Some(value) = max_seq_length {
+            value
+        } else {
+            128
+        };
+        let do_lower_case = if let Some(value) = do_lower_case {
+            value
+        } else {
+            true
+        };
 
         let max_seq_length = if max_seq_length > 510 {
             warn!("Bert only allows a max_seq_length of 510 (512 with special tokens). Value will be set to 510");
@@ -85,54 +94,75 @@ impl Bert {
         let bert_config = BertConfig::from_file(bert_config_path.as_path());
         let bert: BertModel<BertEmbeddings> = BertModel::new(&(&vs.root() / "bert"), &bert_config);
 
-        let tokenizer = BertTokenizer::from_file(bert_vocab_path.to_str().unwrap(), do_lower_case);
-        let cls_token_id = tokenizer.convert_tokens_to_ids(&[String::from(BertVocab::cls_value())].to_vec())[0];
-        let sep_token_id = tokenizer.convert_tokens_to_ids(&[String::from(BertVocab::sep_value())].to_vec())[0];
+        let tokenizer =
+            BertTokenizer::from_file(bert_vocab_path.to_str().unwrap(), do_lower_case, false)
+                .unwrap();
+        let vocab = Tokenizer::vocab(&tokenizer);
+        let cls_token_id =
+            tokenizer.convert_tokens_to_ids(&[String::from(vocab.get_cls_value())].to_vec())[0];
+        let sep_token_id =
+            tokenizer.convert_tokens_to_ids(&[String::from(vocab.get_sep_value())].to_vec())[0];
 
-        vs.load(Path::new(&weights_path)).expect("Failed to load weights!");
+        vs.load(Path::new(&weights_path))
+            .expect("Failed to load weights!");
 
-        Bert {bert, tokenizer, max_seq_length, cls_token_id, sep_token_id,
-            vs
+        Bert {
+            bert,
+            tokenizer,
+            max_seq_length,
+            cls_token_id,
+            sep_token_id,
+            vs,
         }
     }
 
     pub fn forward_t(&self, features: Features) -> Features {
-        let (output_tokens, _, _, _) = no_grad(|| {
-            self.bert.forward_t(
-            Some(features.input_ids.as_ref().unwrap().shallow_clone()),
-            Some(features.input_mask.as_ref().unwrap().shallow_clone()),
-            Some(features.token_type_ids.as_ref().unwrap().shallow_clone()),
-            None,
-            None,
-            &None,
-            &None, //Some(features.input_mask.as_ref().unwrap().shallow_clone()),
-            false).unwrap() });
+        let model = no_grad(|| {
+            self.bert
+                .forward_t(
+                    Some(&features.input_ids.as_ref().unwrap().shallow_clone()),
+                    Some(&features.input_mask.as_ref().unwrap().shallow_clone()),
+                    Some(&features.token_type_ids.as_ref().unwrap().shallow_clone()),
+                    None.as_ref(),
+                    None.as_ref(),
+                    None.as_ref(),
+                    None.as_ref(), //Some(features.input_mask.as_ref().unwrap().shallow_clone()),
+                    false,
+                )
+                .unwrap()
+        });
+        let output_tokens = model.hidden_state;
 
-        let cls_token = output_tokens.i((.., 0, ..));  //CLS token is first token
+        let cls_token = output_tokens.i0(); //CLS token is first token
 
         Features {
             token_embeddings: Some(output_tokens),
             cls_token_embeddings: Some(cls_token),
-            .. features }
+            ..features
+        }
     }
 
     pub fn tokenize(&self, text: &str) -> Vec<i64> {
-        self.tokenizer.convert_tokens_to_ids(&self.tokenizer.tokenize(text))
+        self.tokenizer
+            .convert_tokens_to_ids(&self.tokenizer.tokenize(text))
     }
 
     pub fn tokenize_multithreaded(&self, text_list: Vec<&str>) -> Vec<Vec<i64>> {
-        MultiThreadedTokenizer::tokenize_list(&self.tokenizer, text_list)
+        MultiThreadedTokenizer::tokenize_list(&self.tokenizer, &text_list)
             .iter()
             .map(|sentence_tokens| self.tokenizer.convert_tokens_to_ids(sentence_tokens))
             .collect()
     }
 
-    pub fn get_sentence_features(&self, tokens: &[i64], pad_seq_length: usize) -> (Vec<i64>, Vec<i64>, Vec<i64>, Vec<i64>) {
-
+    pub fn get_sentence_features(
+        &self,
+        tokens: &[i64],
+        pad_seq_length: usize,
+    ) -> (Vec<i64>, Vec<i64>, Vec<i64>, Vec<i64>) {
         let mut pad_seq_length = pad_seq_length.min(self.max_seq_length as usize);
 
         let tokens = if pad_seq_length < tokens.len() {
-            &tokens[.. pad_seq_length as usize]
+            &tokens[..pad_seq_length as usize]
         } else {
             &tokens
         };
@@ -142,7 +172,7 @@ impl Bert {
             .chain(tokens.to_vec().into_iter())
             .chain(vec![self.sep_token_id])
             .collect();
-        let sentence_length = input_ids.len() ;
+        let sentence_length = input_ids.len();
 
         pad_seq_length += 2;
 
@@ -153,12 +183,17 @@ impl Bert {
         let padding = vec![0; pad_seq_length as usize - input_ids.len()];
         input_ids.extend(&padding);
         token_type_ids.extend(&padding);
-        input_mask.extend( &padding);
+        input_mask.extend(&padding);
 
         assert_eq!(input_ids.len(), pad_seq_length);
         assert_eq!(input_mask.len(), pad_seq_length);
         assert_eq!(token_type_ids.len(), pad_seq_length);
 
-        (input_ids, token_type_ids, input_mask, vec![sentence_length as i64])
+        (
+            input_ids,
+            token_type_ids,
+            input_mask,
+            vec![sentence_length as i64],
+        )
     }
 }

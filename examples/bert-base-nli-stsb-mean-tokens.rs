@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use tch::{Tensor, Kind, Device, nn, Cuda, no_grad};
+use tch::{nn, no_grad, Cuda, Device, Kind, Tensor};
 
 use rust_sentence_transformers::model::SentenceTransformer;
 
 fn main() -> failure::Fallible<()> {
-
     let device = Device::Cpu;
 
     let sentences = [
@@ -27,11 +26,10 @@ fn main() -> failure::Fallible<()> {
         "The Bushnell Horse Show features some of the best Belgian and Percheron hitches in the country. Teams have come from many different states and Canada to compete."
     ];
 
-    let embedder = SentenceTransformer::new(
-        Path::new("/path/to/bert-base-nli-stsb-mean-tokens"),
-        device)?;
+    let embedder =
+        SentenceTransformer::new(Path::new("/path/to/bert-base-nli-stsb-mean-tokens"), device)?;
 
-    let embedings = &embedder.encode(sentences.to_vec(), 8);
+    let embedings = &embedder.encode(sentences.to_vec(), Some(8));
     println!("{:?}", embedings);
     Ok(())
 }
